@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple, List, NamedTuple
+from typing import Tuple, List, NamedTuple, Type, Union, Any, Optional
 import time
 from prettytable import PrettyTable
 
@@ -51,13 +51,14 @@ class KnapsackEvaluator:
         return str(table)
 
 
-class KnapsackBase(KnapsackEvaluator):
+class Knapsack(KnapsackEvaluator):
     def __init__(self, items: List[Item], capacity: int):
         self.items = items
         self.capacity = capacity
         self.eval = None
         for idx, item in enumerate(self.items):
             self.items[idx] = item._replace(index=idx)
+        self.approach = None
         super().__init__()
 
     def __repr__(self):
@@ -73,26 +74,44 @@ class KnapsackBase(KnapsackEvaluator):
 
         return f"{items_table}\n{problem_info}\n{super().__repr__()}"
 
+    def from_approach(self, approach: Type['KnapsackApproach']):
+        self.approach = approach(self.items, self.capacity)
+        self.eval = self.approach.eval
+        self.add_evaluation(self.approach.eval)
+        return self
 
-class KnapsackExhaustiveSearch(KnapsackBase):
+    @KnapsackEvaluator.evaluate
+    def solve(self) -> Tuple[int, List[int]]:
+        if self.approach:
+            return self.approach.solve()
+        else:
+            raise NotImplementedError("Approach not set, use from_approach() to set an approach.")
+
+
+class KnapsackApproach:
+    def __init__(self, items: List[Item], capacity: int):
+        super().__init__()
+        self.items = items
+        self.capacity = capacity
+        self.eval = KnapsackEvaluation(self.__class__.__name__)
+
+    def solve(self) -> Tuple[int, List[int]]:
+        raise NotImplementedError("This method should be implemented in subclasses")
+
+
+class KnapsackExhaustiveSearch(KnapsackApproach):
     def __init__(self, items: List[Item], capacity: int):
         super().__init__(items, capacity)
         self.best_value = 0
         self.best_subset = []
 
-    def exhaustive_search(self) -> Tuple[int, List[int]]:
-        self.eval = KnapsackEvaluation("Exhaustive Search")
-        self.evaluations.append(self.eval)
-        return self._exhaustive_search()
-
-    @KnapsackEvaluator.evaluate
-    def _exhaustive_search(self) -> Tuple[int, List[int]]:
+    def solve(self) -> Tuple[int, List[int]]:
         visited = [False] * len(self.items)  # Initialize visited array
         self._exhaustive_search_set([], 0, 0, visited)
         return self.best_value, self.best_subset
 
     def _exhaustive_search_set(self, subset: List[int], value: int, weight: int, visited: List[bool]):
-        if weight <= self.capacity and value > self.eval.best_value:
+        if weight <= self.capacity and value > self.best_value:
             self.best_value = value
             self.best_subset = subset[:]
         elif weight > self.capacity:
@@ -107,17 +126,8 @@ class KnapsackExhaustiveSearch(KnapsackBase):
                 visited[i] = False
 
 
-class KnapsackDynamicProgramming(KnapsackBase):
-    def __init__(self, items: List[Item], capacity: int):
-        super().__init__(items, capacity)
-
-    def dynamic_programming(self) -> Tuple[int, List[int]]:
-        self.eval = KnapsackEvaluation("Dynamic Programming")
-        self.add_evaluation(self.eval)
-        return self._dynamic_programming()
-
-    @KnapsackEvaluator.evaluate
-    def _dynamic_programming(self) -> Tuple[int, List[int]]:
+class KnapsackDynamicProgramming(KnapsackApproach):
+    def solve(self) -> Tuple[int, List[int]]:
         n = len(self.items)
         dp = [[0 for _ in range(self.capacity + 1)] for _ in range(n + 1)]
         for i in range(1, n + 1):
@@ -142,23 +152,17 @@ class KnapsackDynamicProgramming(KnapsackBase):
         return subset[::-1]
 
 
-class KnapsackMemoized(KnapsackBase):
+class KnapsackMemoized(KnapsackApproach):
     def __init__(self, items: List[Item], capacity: int):
         super().__init__(items, capacity)
         self.dp = [[None for _ in range(self.capacity + 1)] for _ in range(len(self.items) + 1)]
 
-    def memoized(self) -> Tuple[int, List[int]]:
-        self.eval = KnapsackEvaluation("Memoized")
-        self.add_evaluation(self.eval)
-        return self._memoized()
-
-    @KnapsackEvaluator.evaluate
-    def _memoized(self):
+    def solve(self) -> Tuple[int, List[int]]:
         best_value = self.__memoized(len(self.items), self.capacity)
         best_subset = self.__get_subset()
         return best_value, best_subset
 
-    def __memoized(self, i: int, j: int) -> int:
+    def __memoized(self, i: int, j: int) -> Optional[int]:
         if self.dp[i][j] is not None:
             return self.dp[i][j]
 
@@ -186,17 +190,8 @@ class KnapsackMemoized(KnapsackBase):
         return subset[::-1]
 
 
-class KnapsackGreedy(KnapsackBase):
-    def __init__(self, items: List[Item], capacity: int):
-        super().__init__(items, capacity)
-
-    def greedy(self) -> Tuple[int, List[int]]:
-        self.eval = KnapsackEvaluation("Greedy")
-        self.add_evaluation(self.eval)
-        return self._greedy()
-
-    @KnapsackEvaluator.evaluate
-    def _greedy(self) -> Tuple[int, List[int]]:
+class KnapsackGreedy(KnapsackApproach):
+    def solve(self) -> Tuple[int, List[int]]:
         n = len(self.items)
         items = sorted(self.items, key=lambda x: x.weight == 0 and (x.value * 1000) or x.value / x.weight, reverse=True)
         subset = []
@@ -211,19 +206,11 @@ class KnapsackGreedy(KnapsackBase):
         return value, subset
 
 
-class KnapsackBruteForce(KnapsackBase):
-    def __init__(self, items: List[Item], capacity: int):
-        super().__init__(items, capacity)
-
-    def brute_force(self) -> Tuple[int, List[int]]:
-        self.eval = KnapsackEvaluation("Brute Force")
-        self.add_evaluation(self.eval)
-        return self._brute_force()
-
-    @KnapsackEvaluator.evaluate
-    def _brute_force(self) -> Tuple[int, List[int]]:
+class KnapsackBruteForce(KnapsackApproach):
+    def solve(self) -> Tuple[int, List[int]]:
         n = len(self.items)
-        return self.calc_dp_pos(n, self.capacity), []
+        best_value = self.calc_dp_pos(n, self.capacity)
+        return best_value, []
 
     def calc_dp_pos(self, i, j):
         if i == 0 or j == 0:
@@ -233,9 +220,3 @@ class KnapsackBruteForce(KnapsackBase):
         return max(self.calc_dp_pos(i - 1, j),
                    self.calc_dp_pos(i - 1, j - self.items[i - 1].weight) + self.items[i - 1].value if
                    j - self.items[i - 1].weight >= 0 else 0)
-
-
-class Knapsack(KnapsackExhaustiveSearch, KnapsackDynamicProgramming, KnapsackGreedy, KnapsackBruteForce,
-               KnapsackMemoized):
-    def __init__(self, items: List[Item], capacity: int):
-        super().__init__(items, capacity)
